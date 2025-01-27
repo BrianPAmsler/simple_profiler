@@ -1,5 +1,3 @@
-use std::hash::{DefaultHasher, Hash, Hasher};
-
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, ToTokens};
@@ -66,19 +64,10 @@ pub fn profile(attr: TokenStream, item: TokenStream) -> TokenStream {
         parse_macro_input!(attr as syn::Path).into_token_stream().to_string() + "::" + &func.ident.to_string()
     };
 
-    let mut hasher = DefaultHasher::new();
-    path.hash(&mut hasher);
-    let hash = hasher.finish();
-
     let body  = std::mem::take(&mut func.body);
     func.body = quote! {
         #[cfg(debug_assertions)]
-        static __PROFILER_PATH_KEY__: u64 = #hash;
-        static __PROFILER_PATH_STRING__: &'static str = #path;
-        #[cfg(debug_assertions)]
-        {
-            
-        }
+        let __905d5516_de9e_4cbe_818c_b43ae89fbf8c = simple_profiler::profiler::FunctionCall::new(#path);;
         #body
     };
     
