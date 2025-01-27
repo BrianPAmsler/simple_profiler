@@ -1,0 +1,10 @@
+[package]
+name = "simple_profiler"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+members = ["profile_macro"]
+
+[dependencies]
+profile_macro = { path = "./profile_macro" }
