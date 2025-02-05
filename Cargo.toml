@@ -7,4 +7,7 @@ edition = "2021"
 members = ["profile_macro"]
 
 [dependencies]
+postcard = "1.1.1"
 profile_macro = { path = "./profile_macro" }
+serde = { version = "1.0.217", features = ["derive"] }
+thiserror = "2.0.11"

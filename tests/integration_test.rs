@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use profile_macro::profile;
 use simple_profiler::profiler;
 
@@ -25,7 +23,6 @@ pub fn div(a: f32, b: f32) -> f32 {
 
 #[test]
 pub fn test() {
-    profiler::init_thread();
     for _ in 0..1000000 {
         let a = 5.0;
         let b = 12.6;
@@ -36,6 +33,6 @@ pub fn test() {
         div(a, b);
     }
 
-    profiler::profile_current_thread(profiler::Sort::TotalTime, profiler::Unit::Nanosecond);
+    profiler::profile_current_thread(simple_profiler::analysis::Sort::TotalTime, simple_profiler::analysis::Unit::Nanosecond);
     panic!()
 }

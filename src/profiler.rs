@@ -1,4 +1,9 @@
-use std::{cell::RefCell, collections::HashMap, time::{Duration, Instant}};
+use std::{cell::RefCell, fs::OpenOptions, io::{stdout, Read, Write}, time::Instant};
+
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use crate::{analysis::{global::GlobalAnalyzer, FrameAnalyzer, Sort, Unit}, serialization::StaticStr};
 
 thread_local! {
     static PROFILER: RefCell<Profiler> = RefCell::new(Profiler::new());
@@ -6,29 +11,35 @@ thread_local! {
 
 const INITIAL_CAPACITY: usize = 2usize.pow(25);
 
-#[derive(Default)]
 pub struct Profiler {
+    initial_time: Instant,
     starting_capacity: usize,
     frames: Vec<Frame>,
     current_frame: Vec<Event>
 }
 
+impl Default for Profiler {
+    fn default() -> Self {
+        Self { initial_time: Instant::now(), starting_capacity: Default::default(), frames: Default::default(), current_frame: Default::default() }
+    }
+}
+
 impl Profiler {
     fn new() -> Profiler {
-        Profiler { starting_capacity: INITIAL_CAPACITY, frames: Vec::new(), current_frame: Vec::with_capacity(INITIAL_CAPACITY) }
+        Profiler { initial_time: Instant::now(), starting_capacity: INITIAL_CAPACITY, frames: Vec::new(), current_frame: Vec::with_capacity(INITIAL_CAPACITY) }
     }
 
     fn call(&mut self, name: &'static str) {
         self.current_frame.push(Event {
-            op: Operation::Call(name),
-            timestamp: Instant::now()
+            op: Operation::Call(StaticStr(name)),
+            timestamp: (Instant::now() - self.initial_time).as_nanos()
         });
     }
 
     fn ret(&mut self) {
         self.current_frame.push(Event {
             op: Operation::Return,
-            timestamp: Instant::now()
+            timestamp: (Instant::now() - self.initial_time).as_nanos()
         });
     }
 
@@ -42,160 +53,74 @@ impl Profiler {
 
         self.frames.push(Frame { calls: frame.into_boxed_slice() });
     }
-}
 
-struct FuncAnalysis {
-    name: &'static str,
-    calls: u32,
-    total_time: Duration,
-    average_time: Duration,
-    min_time: Duration,
-    max_time: Duration
-}
+    pub fn get_frames(mut self) -> Frames {
+        self.end_frame();
+        Frames(self.frames.into_boxed_slice())
+    }
 
-pub struct AnalyzedFrames {
-    map: HashMap<&'static str, FuncAnalysis>
-}
+    pub fn dump_frames<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<(), Error> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(path)?;
+        
+        self.end_frame();
 
-impl AnalyzedFrames {
-    fn new(mut profiler: Profiler) -> AnalyzedFrames {
-        profiler.end_frame();
+        let bytes = postcard::to_extend(&self.frames, Vec::new()).unwrap();
 
-        let mut map = HashMap::new();
-        for frame in profiler.frames {
-            let mut call_stack = Vec::new();
-            for Event { op, timestamp } in frame.calls {
-                match op {
-                    Operation::Call(name) => call_stack.push((name, timestamp)),
-                    Operation::Return => {
-                        let (name, call_timestamp) = call_stack.pop().unwrap();
-                        
-                        let v = match map.get_mut(name) {
-                            Some(v) => v,
-                            None => {
-                                map.insert(name, FuncAnalysis {
-                                    name,
-                                    calls: 0,
-                                    total_time: Duration::ZERO,
-                                    average_time: Duration::ZERO,
-                                    min_time: Duration::MAX,
-                                    max_time: Duration::ZERO,
-                                });
-                                map.get_mut(name).unwrap()
-                            },
-                        };
+        file.write(&bytes)?;
 
-                        let duration = timestamp - call_timestamp;
-                        v.calls += 1;
-                        v.total_time += duration;
+        Ok(())
+    }
 
-                        if duration > v.max_time {
-                            v.max_time = duration;
-                        }
+    pub fn load_frames<P: AsRef<std::path::Path>>(path: P) -> Result<Frames, Error> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(path)?;
 
-                        if duration < v.min_time {
-                            v.min_time = duration;
-                        }
-                    },
-                }
-            }
-        }
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
 
-        for (_, v) in &mut map {
-            v.average_time = v.total_time / v.calls;
-        }
-
-        AnalyzedFrames { map }
+        Ok(Frames(postcard::from_bytes(&bytes)?))
     }
 }
 
-pub enum Sort {
-    NameAscending,
-    NameDescending,
-    TotalTime,
-    MinTime,
-    MaxTime,
-    AverageTime,
-    Calls
-}
+pub struct Frames(pub(in crate) Box<[Frame]>);
 
-pub enum Unit {
-    Second,
-    Millisecond,
-    Microsecond,
-    Nanosecond
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("{0}")]
+    PostcardError(#[from] postcard::Error),
+    #[error("{0}")]
+    IoError(#[from] std::io::Error)
 }
 
 pub fn profile_current_thread(sort_by: Sort, unit: Unit) {
     let profiler =  PROFILER.take();
-    let analysis = AnalyzedFrames::new(profiler);
+    let mut analysis = GlobalAnalyzer::new(profiler.get_frames());
+    analysis.set_sort(sort_by);
+    analysis.set_unit(unit);
 
-    let cmp = match sort_by {
-        Sort::NameAscending => |a: &(&str, FuncAnalysis) , b: &(&str, FuncAnalysis) | {
-            a.0.cmp(b.0)
-        },
-        Sort::NameDescending => |a: &(&str, FuncAnalysis) , b: &(&str, FuncAnalysis) | {
-            a.0.cmp(b.0).reverse()
-        },
-        Sort::TotalTime => |a: &(&str, FuncAnalysis) , b: &(&str, FuncAnalysis) | {
-            a.1.total_time.cmp(&b.1.total_time).reverse()
-        },
-        Sort::MinTime => |a: &(&str, FuncAnalysis) , b: &(&str, FuncAnalysis) | {
-            a.1.min_time.cmp(&b.1.min_time).reverse()
-        },
-        Sort::MaxTime => |a: &(&str, FuncAnalysis) , b: &(&str, FuncAnalysis) | {
-            a.1.max_time.cmp(&b.1.max_time).reverse()
-        },
-        Sort::AverageTime => |a: &(&str, FuncAnalysis) , b: &(&str, FuncAnalysis) | {
-            a.1.average_time.cmp(&b.1.average_time).reverse()
-        },
-        Sort::Calls => |a: &(&str, FuncAnalysis) , b: &(&str, FuncAnalysis) | {
-            a.1.calls.cmp(&b.1.calls).reverse()
-        },
-    };
-
-    let mut fns: Vec<_> = analysis.map.into_iter().collect();
-    fns.sort_by(cmp);
-
-    let convert = match unit {
-        Unit::Second => |d: &Duration| d.as_secs() as u128,
-        Unit::Millisecond => Duration::as_millis,
-        Unit::Microsecond => Duration::as_micros,
-        Unit::Nanosecond => Duration::as_nanos,
-    };
-
-    println!("Function Name        Total Time   Min Time   Max Time   Avg Time                Calls");
-    for fn_ in fns {
-        println!("{:20} {:10} {:10} {:10} {:10} {:20}",
-            fn_.0,
-            convert(&fn_.1.total_time),
-            convert(&fn_.1.min_time),
-            convert(&fn_.1.max_time),
-            convert(&fn_.1.average_time),
-            fn_.1.calls
-        );
-    }
+    analysis.analyze(&mut stdout()).unwrap();
 }
 
-pub fn init_thread() {
-    PROFILER.with_borrow_mut(|profiler| {
-        profiler.current_frame.push(Event { op: Operation::Return, timestamp: Instant::now() });
-        profiler.current_frame.pop();
-    })
-}
-
-enum Operation {
-    Call(&'static str),
+#[derive(Serialize, Deserialize, Clone, Copy)]
+pub(in crate) enum Operation {
+    Call(StaticStr),
     Return
 }
 
-struct Event {
-    op: Operation,
-    timestamp: Instant
+#[derive(Serialize, Deserialize)]
+pub(in crate) struct Event {
+    pub op: Operation,
+    pub timestamp: u128
 }
 
-struct Frame {
-    calls: Box<[Event]>
+#[derive(Serialize, Deserialize)]
+pub(in crate) struct Frame {
+    pub calls: Box<[Event]>
 }
 
 pub struct FunctionCall {}
