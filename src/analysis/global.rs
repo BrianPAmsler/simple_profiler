@@ -69,7 +69,7 @@ impl FrameAnalyzer for GlobalAnalyzer {
         GlobalAnalyzer { map, sort_by: Sort::TotalTime, unit: Unit::Millisecond  }
     }
 
-    fn analyze(self, fmt: &mut dyn std::io::Write) -> std::io::Result<()> {
+    fn analyze(self, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
         let cmp = match self.sort_by {
             Sort::NameAscending => |a: &(&str, FuncAnalysis) , b: &(&str, FuncAnalysis) | {
                 a.0.cmp(b.0)
@@ -106,9 +106,9 @@ impl FrameAnalyzer for GlobalAnalyzer {
             }
         };
     
-        writeln!(fmt, "Function Name        Total Time   Min Time   Max Time   Avg Time                Calls")?;
+        writeln!(writer, "Function Name        Total Time   Min Time   Max Time   Avg Time                Calls")?;
         for fn_ in fns {
-            writeln!(fmt, "{:20} {:10} {:10} {:10} {:10} {:20}",
+            writeln!(writer, "{:20} {:10} {:10} {:10} {:10} {:20}",
                 fn_.0,
                 convert(fn_.1.total_time),
                 convert(fn_.1.min_time),

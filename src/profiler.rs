@@ -92,7 +92,7 @@ pub struct Frames(pub(in crate) Box<[Frame]>);
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("{0}")]
-    PostcardError(#[from] postcard::Error),
+    SerializationError(#[from] postcard::Error),
     #[error("{0}")]
     IoError(#[from] std::io::Error)
 }

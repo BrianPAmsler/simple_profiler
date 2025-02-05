@@ -5,7 +5,7 @@ use std::io::Write;
 use crate::profiler::Frames;
 
 pub trait FrameAnalyzer {
-    fn analyze(self, fmt: &mut dyn Write) -> std::io::Result<()>;
+    fn analyze(self, writer: &mut dyn Write) -> std::io::Result<()>;
     fn new(frames: Frames) -> Self;
 }
 
