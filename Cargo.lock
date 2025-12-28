@@ -225,7 +225,7 @@ dependencies = [
 
 [[package]]
 name = "simple_profiler"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "postcard",
  "profile_macro",
